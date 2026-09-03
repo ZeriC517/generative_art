@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Elite Generative Art & Physics Engine</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #030305; font-family: monospace; color: #fff; }
+        canvas { display: block; }
+        #ui {
+            position: absolute; top: 15px; left: 15px; background: rgba(10, 10, 15, 0.9);
+            padding: 15px; border-radius: 8px; backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15); width: 310px;
+            max-height: 92vh; overflow-y: auto; z-index: 10; box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+        }
+        #ui::-webkit-scrollbar { width: 6px; }
+        #ui::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        .control-group { margin-bottom: 12px; }
+        label { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; color: #d0d0d0; }
+        input[type="range"], select {
+            width: 100%; cursor: pointer; background: #1a1a24; color: #fff;
+            border: 1px solid #333; border-radius: 4px; padding: 5px; font-size: 11px;
+        }
+        .color-row { display: flex; gap: 5px; margin-top: 5px; }
+        .color-row input[type="color"] { flex: 1; height: 26px; border: none; cursor: pointer; background: none; }
+        button {
+            width: 100%; padding: 8px; background: linear-gradient(135deg, #00f5d4, #7b2cbf);
+            color: #fff; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;
+            margin-top: 6px; transition: opacity 0.2s; font-size: 12px;
+        }
+        button:hover { opacity: 0.9; }
+        .instructions {
+            font-size: 10px; color: #888; margin-top: 10px; line-height: 1.5;
+            border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px;
+        }
+        strong { color: #fff; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div class="control-group">
+            <label>Master Pattern Mode:</label>
+            <select id="patternMode">
+                <option value="topo">Topographic Contours (Elevation)</option>
+                <option value="nbody">N-Body Gravitational Orbitals</option>
+                <option value="plexus">Constellation Plexus (Proximity Link)</option>
+                <option value="flow">Fluid Flow Streamers</option>
+                <option value="spiral">Recursive Spirals</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>Mandala Symmetry (Kaleidoscope):</label>
+            <select id="symmetryMode">
+                <option value="1">None (Organic Full Screen)</option>
+                <option value="4">4-Way Axis</option>
+                <option value="8">8-Way Axis</option>
+                <option value="12">12-Way Sacred Geometry</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>Mouse Interaction Physics:</label>
+            <select id="mouseMode">
+                <option value="kinetic">Kinetic Slingshot & Spawn</option>
+                <option value="attract">Black Hole (Attract)</option>
+                <option value="repel">Force Field (Repel)</option>
+                <option value="none">None</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>GPU Blend Mode:</label>
+            <select id="blendMode">
+                <option value="screen">Screen (Soft Glow Stack)</option>
+                <option value="lighter">Lighter (Intense Neon)</option>
+                <option value="source-over">Standard (Opaque)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>Particle Count: <span id="densityVal">100</span></label>
+            <input type="range" id="density" min="20" max="300" value="100">
+        </div>
+        <div class="control-group">
+            <label>Chaos Velocity / Mass: <span id="chaosVal">2.5</span></label>
+            <input type="range" id="chaos" min="0.5" max="6.0" step="0.1" value="2.5">
+        </div>
+        <div class="control-group">
+            <label>Stroke Weight: <span id="strokeVal">1.2</span></label>
+            <input type="range" id="stroke" min="0.2" max="5" step="0.2" value="1.2">
+        </div>
+        <div class="control-group">
+            <label>Custom Hex Palettes:</label>
+            <div class="color-row">
+                <input type="color" id="col1" value="#00f5d4">
+                <input type="color" id="col2" value="#7b2cbf">
+                <input type="color" id="col3" value="#f72585">
+                <input type="color" id="col4" value="#4cc9f0">
+            </div>
+        </div>
+        <button id="regenerate">Randomize Palette & Physics</button>
+        <button id="recordBtn">Record 10s Video Loop</button>
+        <div class="instructions">
+            <strong>Kinetic Mode:</strong> Drag a particle to Slingshot, or drag on empty space to Spawn.<br>
+            <strong>'S':</strong> Export 4K Image | <strong>'Space':</strong> Pause
+        </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // UI Bindings
+        const UI = {
+            density: document.getElementById('density'),
+            chaos: document.getElementById('chaos'),
+            stroke: document.getElementById('stroke'),
+            pattern: document.getElementById('patternMode'),
+            symmetry: document.getElementById('symmetryMode'),
+            mouse: document.getElementById('mouseMode'),
+            blend: document.getElementById('blendMode'),
+            colInputs: [document.getElementById('col1'), document.getElementById('col2'), document.getElementById('col3'), document.getElementById('col4')]
+        };
+
+        let isRunning = true;
+        let elements = [];
+        let gravityWells = [];
+        
+        // Advanced Mouse State for Slingshot
+        let mouse = { x: -1000, y: -1000, px: -1000, py: -1000, active: false, down: false, draggedNode: null };
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            initGravityWells();
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function getPalette() { return UI.colInputs.map(i => i.value); }
+        function randomizePalette() {
+            UI.colInputs.forEach(i => i.value = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0'));
+        }
+
+        // Initialize N-Body Gravity Wells (Hidden points of mass)
+        function initGravityWells() {
+            gravityWells = [];
+            for (let i = 0; i < 5; i++) {
+                gravityWells.push({
+                    x: Math.random(), // Normalized 0.0 to 1.0
+                    y: Math.random(),
+                    mass: Math.random() * 2000 + 1000
+                });
+            }
+        }
+
+        // --- CORE ART PARTICLE ---
+        class ArtElement {
+            constructor(x = null, y = null) {
+                this.x = x !== null ? x : Math.random() * canvas.width;
+                this.y = y !== null ? y : Math.random() * canvas.height;
+                this.vx = 0;
+                this.vy = 0;
+                const palette = getPalette();
+                this.color = palette[Math.floor(Math.random() * palette.length)];
+                this.angle = Math.random() * Math.PI * 2;
+                this.life = Math.random() * 300 + 100;
+                this.age = 0;
+                this.dead = false;
+            }
+            
+            update(chaos) {
+                if (mouse.draggedNode === this) return; // Physics pause if being pulled in slingshot
+
+                const mode = UI.pattern.value;
+
+                if (mode === 'flow') {
+                    let angle = (Math.cos(this.x * 0.003 * chaos) + Math.sin(this.y * 0.003 * chaos)) * Math.PI * chaos;
+                    this.vx = Math.cos(angle) * 2.5;
+                    this.vy = Math.sin(angle) * 2.5;
+                } 
+                else if (mode === 'topo') {
+                    // Simulates 2D Perlin Noise terrain lines using complex intersecting sine waves
+                    let scale = 0.004;
+                    let noise = Math.sin(this.x * scale) * Math.cos(this.y * scale) * 10;
+                    noise += Math.sin((this.x + this.y) * scale * 0.5); // Organic warp
+                    let angle = noise * Math.PI * (chaos * 0.2);
+                    this.vx = Math.cos(angle) * 2.2;
+                    this.vy = Math.sin(angle) * 2.2;
+                }
+                else if (mode === 'plexus') {
+                    // Slow ambient drift for constellation networks
+                    let angle = Math.sin(this.x * 0.01) + Math.cos(this.y * 0.01);
+                    this.vx = Math.cos(angle) * chaos * 0.5;
+                    this.vy = Math.sin(angle) * chaos * 0.5;
+                }
+                else if (mode === 'spiral') {
+                    this.angle += 0.03 * chaos;
+                    let radius = this.age * 0.4;
+                    this.x = (canvas.width / 2) + Math.cos(this.angle) * radius;
+                    this.y = (canvas.height / 2) + Math.sin(this.angle) * radius;
+                    this.vx = 0; this.vy = 0;
+                }
+                else if (mode === 'nbody') {
+                    // Orbital Inverse-Square Law Physics
+                    gravityWells.forEach(w => {
+                        let dx = (w.x * canvas.width) - this.x;
+                        let dy = (w.y * canvas.height) - this.y;
+                        let distSq = dx*dx + dy*dy;
+                        if (distSq < 400) distSq = 400; // Anti-singularity safeguard
+                        let force = (w.mass * chaos * 0.005) / distSq;
+                        this.vx += (dx / Math.sqrt(distSq)) * force;
+                        this.vy += (dy / Math.sqrt(distSq)) * force;
+                    });
+                    this.vx *= 0.99; // Orbital friction/decay
+                    this.vy *= 0.99;
+                }
+
+                // Passive Mouse Attraction / Repulsion
+                if (mouse.active && UI.mouse.value === 'attract' || UI.mouse.value === 'repel') {
+                    let dx = mouse.x - this.x; let dy = mouse.y - this.y;
+                    let dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < 250) {
+                        let force = (250 - dist) / 250;
+                        if (UI.mouse.value === 'attract') { this.vx += (dx/dist) * force * 1.5; this.vy += (dy/dist) * force * 1.5; }
+                        else if (UI.mouse.value === 'repel') { this.vx -= (dx/dist) * force * 2; this.vy -= (dy/dist) * force * 2; }
+                    }
+                }
+
+                // Apply Kinematics
+                this.x += this.vx;
+                this.y += this.vy;
+                this.age++;
+
+                // Lifecycle Management
+                if (mode === 'nbody') {
+                    // Orbitals wrap around the screen to maintain loops
+                    if (this.x < 0) this.x = canvas.width;
+                    if (this.x > canvas.width) this.x = 0;
+                    if (this.y < 0) this.y = canvas.height;
+                    if (this.y > canvas.height) this.y = 0;
+                } else if (this.x < 0 || this.x > canvas.width || this.y < 0 || this.y > canvas.height || this.age > this.life) {
+                    this.dead = true; 
+                }
+            }
+
+            draw(ctxTarget, weight, cx, cy) {
+                const mode = UI.pattern.value;
+                ctxTarget.strokeStyle = this.color;
+                ctxTarget.fillStyle = this.color;
+                ctxTarget.lineWidth = weight;
+                ctxTarget.globalAlpha = 0.6;
+
+                // Adjust drawing relative to center (cx, cy) to support Matrix Rotations (Kaleidoscope)
+                let renderX = this.x - cx;
+                let renderY = this.y - cy;
+
+                if (mode === 'flow' || mode === 'topo' || mode === 'nbody') {
+                    ctxTarget.beginPath();
+                    ctxTarget.arc(renderX, renderY, weight * 1.5, 0, Math.PI * 2);
+                    ctxTarget.fill();
+                } else if (mode === 'spiral') {
+                    ctxTarget.beginPath();
+                    ctxTarget.arc(renderX, renderY, weight, 0, Math.PI * 2);
+                    ctxTarget.stroke();
+                } else if (mode === 'plexus') {
+                    ctxTarget.beginPath();
+                    ctxTarget.arc(renderX, renderY, weight * 2, 0, Math.PI * 2);
+                    ctxTarget.fill();
+                }
+            }
+        }
+
+        function initElements() {
+            elements = [];
+            const count = parseInt(UI.density.value);
+            for (let i = 0; i < count; i++) elements.push(new ArtElement());
+            initGravityWells();
+        }
+
+        // --- INTERACTIVE MOUSE LISTENERS ---
+        window.addEventListener('mousedown', (e) => {
+            mouse.down = true;
+            if (UI.mouse.value === 'kinetic') {
+                // Check if clicking near a particle to grab it for Slingshot
+                let closest = null;
+                let minDist = 50; // Grab radius
+                elements.forEach(el => {
+                    let d = Math.hypot(el.x - mouse.x, el.y - mouse.y);
+                    if (d < minDist) { minDist = d; closest = el; }
+                });
+                mouse.draggedNode = closest;
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            mouse.down = false;
+            // Release Slingshot
+            if (mouse.draggedNode) {
+                mouse.draggedNode.vx = (mouse.draggedNode.x - mouse.x) * 0.15;
+                mouse.draggedNode.vy = (mouse.draggedNode.y - mouse.y) * 0.15;
+                mouse.draggedNode = null;
+            }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            mouse.px = mouse.x; mouse.py = mouse.y;
+            mouse.x = e.clientX; mouse.y = e.clientY;
+            mouse.active = true;
+            
+            // Kinetic Spawning (Drawing with the mouse)
+            if (mouse.down && UI.mouse.value === 'kinetic' && !mouse.draggedNode) {
+                let el = new ArtElement(mouse.x, mouse.y);
+                el.vx = (mouse.x - mouse.px) * 0.3; // Inherit velocity from mouse flick
+                el.vy = (mouse.y - mouse.py) * 0.3;
+                el.life = 150; 
+                elements.push(el);
+            }
+        });
+        window.addEventListener('mouseleave', () => mouse.active = false);
+
+        // --- UI RE-RENDERS ---
+        UI.density.oninput = () => { document.getElementById('densityVal').textContent = UI.density.value; initElements(); };
+        UI.chaos.oninput = () => document.getElementById('chaosVal').textContent = UI.chaos.value;
+        UI.stroke.oninput = () => document.getElementById('strokeVal').textContent = UI.stroke.value;
+        UI.pattern.onchange = () => { ctx.fillStyle='#030305'; ctx.fillRect(0,0,canvas.width,canvas.height); initElements(); };
+        document.getElementById('regenerate').onclick = () => {
+            randomizePalette(); initGravityWells();
+            ctx.fillStyle='#030305'; ctx.fillRect(0,0,canvas.width,canvas.height); initElements();
+        };
+
+        // --- MAIN ANIMATION LOOP ---
+        function animate() {
+            if (isRunning) {
+                // Screen fading for motion blur trails
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.fillStyle = 'rgba(3, 3, 5, 0.08)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.globalCompositeOperation = UI.blend.value; // Enable Neon/Glow GPU blending
+
+                const chaos = parseFloat(UI.chaos.value);
+                const weight = parseFloat(UI.stroke.value);
+                const symCount = parseInt(UI.symmetry.value);
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+
+                // 1. Update Physics (Once per frame)
+                elements.forEach(el => el.update(chaos));
+
+                // Maintain population
+                elements = elements.filter(el => !el.dead);
+                if (elements.length < parseInt(UI.density.value)) {
+                    elements.push(new ArtElement());
+                }
+
+                // 2. Render Phase with Kaleidoscope Symmetry Matrix
+                for (let s = 0; s < symCount; s++) {
+                    ctx.save();
+                    ctx.translate(cx, cy);
+                    ctx.rotate((Math.PI * 2 / symCount) * s);
+                    
+                    // Constellation Plexus Pass
+                    if (UI.pattern.value === 'plexus') {
+                        ctx.beginPath();
+                        for (let i = 0; i < elements.length; i++) {
+                            for (let j = i + 1; j < elements.length; j++) {
+                                let dx = elements[i].x - elements[j].x;
+                                let dy = elements[i].y - elements[j].y;
+                                // Pythagorean theorem for proximity check
+                                if (dx * dx + dy * dy < 12000) { 
+                                    ctx.moveTo(elements[i].x - cx, elements[i].y - cy);
+                                    ctx.lineTo(elements[j].x - cx, elements[j].y - cy);
+                                }
+                            }
+                        }
+                        ctx.strokeStyle = getPalette()[0];
+                        ctx.lineWidth = weight * 0.3;
+                        ctx.globalAlpha = 0.3;
+                        ctx.stroke();
+                    }
+
+                    // Node Render Pass
+                    elements.forEach(el => el.draw(ctx, weight, cx, cy));
+                    
+                    ctx.restore();
+                }
+
+                // UI Overlay: Draw Slingshot Rubber Band (Bypasses symmetry)
+                if (mouse.draggedNode) {
+                    ctx.globalCompositeOperation = 'source-over';
+                    ctx.beginPath();
+                    ctx.moveTo(mouse.draggedNode.x, mouse.draggedNode.y);
+                    ctx.lineTo(mouse.x, mouse.y);
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+            requestAnimationFrame(animate);
+        }
+
+        // --- 4K CINEMATIC EXPORT ENGINE ---
+        function exportHighRes() {
+            const expCanvas = document.createElement('canvas');
+            const expCtx = expCanvas.getContext('2d');
+            expCanvas.width = 3840; expCanvas.height = 2160;
+            
+            expCtx.fillStyle = '#030305';
+            expCtx.fillRect(0, 0, 3840, 2160);
+            expCtx.globalCompositeOperation = UI.blend.value;
+            
+            const symCount = parseInt(UI.symmetry.value);
+            const cx4k = 3840 / 2;
+            const cy4k = 2160 / 2;
+            const mode = UI.pattern.value;
+            const palette = getPalette();
+
+            // Simulate the exact particle engine on a hidden 4K canvas
+            for (let i = 0; i < 2000; i++) {
+                let x = Math.random() * 3840;
+                let y = Math.random() * 2160;
+                let col = palette[Math.floor(Math.random() * palette.length)];
+                let pathAngle = Math.random() * Math.PI * 2;
+                
+                expCtx.strokeStyle = col; expCtx.fillStyle = col;
+
+                for (let s = 0; s < symCount; s++) {
+                    expCtx.save();
+                    expCtx.translate(cx4k, cy4k);
+                    expCtx.rotate((Math.PI * 2 / symCount) * s);
+                    
+                    let lx = x; let ly = y;
+                    expCtx.beginPath();
+                    
+                    for(let step = 0; step < 80; step++) {
+                        if (mode === 'flow' || mode === 'spiral' || mode === 'plexus') {
+                            let angle = (Math.cos(lx * 0.002) + Math.sin(ly * 0.002)) * Math.PI * parseFloat(UI.chaos.value);
+                            lx += Math.cos(angle) * 4; ly += Math.sin(angle) * 4;
+                        } else if (mode === 'topo') {
+                            let scale = 0.003;
+                            let noise = Math.sin(lx * scale) * Math.cos(ly * scale) * 10;
+                            let angle = noise * Math.PI * (parseFloat(UI.chaos.value) * 0.2);
+                            lx += Math.cos(angle) * 4; ly += Math.sin(angle) * 4;
+                        }
+                        expCtx.arc(lx - cx4k, ly - cy4k, parseFloat(UI.stroke.value) * 1.5, 0, Math.PI * 2);
+                    }
+                    expCtx.fill();
+                    expCtx.restore();
+                }
+            }
+
+            const link = document.createElement('a');
+            link.download = `art-engine-4k-${Date.now()}.png`;
+            link.href = expCanvas.toDataURL('image/png');
+            link.click();
+        }
+
+        // Keybindings
+        window.addEventListener('keydown', (e) => {
+            if (e.key.toLowerCase() === 's') exportHighRes();
+            if (e.code === 'Space') { isRunning = !isRunning; e.preventDefault(); }
+        });
+
+        // Initialize App
+        initElements();
+        animate();
+    </script>
+</body>
+</html>
